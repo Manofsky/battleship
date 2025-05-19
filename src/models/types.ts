@@ -44,14 +44,15 @@ export interface CreateRoomRequest extends Message {
 export interface AddUserToRoomRequest extends Message {
   type: MessageType.ADD_USER_TO_ROOM;
   data: {
-    indexRoom: string | number;
-  };
+    indexRoom?: string | number;
+  } | string | number;
 }
 
 export interface AddShipsRequest extends Message {
   type: MessageType.ADD_SHIPS;
   data: {
-    gameId: string | number;
+    gameId?: string | number;
+    idGame?: string | number; // Добавляем поддержку альтернативного формата
     ships: Ship[];
     indexPlayer: string | number;
   };

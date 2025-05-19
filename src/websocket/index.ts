@@ -86,20 +86,31 @@ export class WebSocketManager {
   // Method for sending a message to a specific client
   public sendMessage(ws: ExtendedWebSocket, message: Message): void {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(message));
+      try {
+        console.log('Sending message:', message.type);
+        const jsonString = JSON.stringify(message);
+        ws.send(jsonString);
+      } catch (error) {
+        console.error('Error sending message:', error);
+      }
     }
   }
 
   // Method for sending a message to all clients
   public broadcastMessage(message: Message): void {
-    const jsonMessage = JSON.stringify(message);
-    
-    // Send to all native WebSocket clients
-    this.wss.clients.forEach((client: WebSocket) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(jsonMessage);
-      }
-    });
+    try {
+      // Ensure message is properly formatted as JSON
+      const jsonMessage = JSON.stringify(message);
+      
+      // Send to all WebSocket clients
+      this.wss.clients.forEach((client: WebSocket) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(jsonMessage);
+        }
+      });
+    } catch (error) {
+      console.error('Error broadcasting message:', error);
+    }
   }
 
   // Method for broadcasting a message to all clients in a room

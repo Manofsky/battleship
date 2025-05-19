@@ -115,12 +115,12 @@ export class MessageHandler {
         // Invalid password
         this.wsManager.sendMessage(ws, {
           type: MessageType.REG,
-          data: {
+          data: JSON.stringify({
             name,
             index: -1,
             error: true,
             errorText: 'Invalid password'
-          },
+          }),
           id: 0
         });
         return;
@@ -136,12 +136,12 @@ export class MessageHandler {
     // Send successful response
     this.wsManager.sendMessage(ws, {
       type: MessageType.REG,
-      data: {
+      data: JSON.stringify({
         name: player.name,
         index: player.index,
         error: false,
         errorText: ''
-      },
+      }),
       id: 0
     });
     
@@ -163,19 +163,38 @@ export class MessageHandler {
     
     try {
       // Create new room
-      gameStore.createRoom(playerId);
+      const room = gameStore.createRoom(playerId);
+      console.log(`Room created with ID: ${room.roomId}`);
+      
+      // Send confirmation to the client who created the room
+      this.wsManager.sendMessage(ws, {
+        type: 'room_created',
+        data: {
+          roomId: room.roomId,
+          message: `Room created successfully with ID: ${room.roomId}`
+        },
+        id: message.id
+      });
       
       // Send updated room list to all players
       this.sendRoomsUpdate();
     } catch (error) {
       console.error('Error creating room:', error);
+      
+      // Send error message to the client
+      this.wsManager.sendMessage(ws, {
+        type: 'error',
+        data: {
+          message: `Failed to create room: ${error instanceof Error ? error.message : 'Unknown error'}`
+        },
+        id: message.id
+      });
     }
   }
 
   // Adding player to room handling
   private handleAddUserToRoom(ws: WebSocket, message: AddUserToRoomRequest): void {
     const playerId = this.clientsMap.get(ws);
-    const { indexRoom } = message.data;
     
     if (!playerId) {
       console.error('Player not registered');
@@ -183,12 +202,73 @@ export class MessageHandler {
     }
     
     try {
+      // Получаем ID комнаты из разных возможных форматов данных
+      let indexRoom: string | number | undefined;
+      
+      // Проверяем формат данных
+      console.log(`Message data type: ${typeof message.data}`);
+      console.log(`Message data: ${JSON.stringify(message.data)}`);
+      
+      if (typeof message.data === 'number') {
+        // Если data - это число, используем его напрямую как ID комнаты
+        indexRoom = message.data;
+      } else if (typeof message.data === 'string') {
+        // Если data - это строка, пробуем парсить её как JSON
+        try {
+          const parsedData = JSON.parse(message.data);
+          console.log(`Parsed data: ${JSON.stringify(parsedData)}`);
+          
+          if (parsedData && typeof parsedData === 'object' && 'indexRoom' in parsedData) {
+            indexRoom = parsedData.indexRoom;
+          } else {
+            // Если не удалось найти indexRoom в объекте, пробуем использовать строку напрямую
+            indexRoom = message.data;
+          }
+        } catch (e) {
+          // Если не удалось парсить JSON, используем строку как есть
+          console.log(`Failed to parse data as JSON: ${e instanceof Error ? e.message : 'Unknown error'}`);
+          indexRoom = message.data;
+        }
+      } else if (message.data && typeof message.data === 'object') {
+        // Если data - это объект, пытаемся получить indexRoom из него
+        indexRoom = message.data.indexRoom;
+      }
+      
+      // Проверяем, что indexRoom определен
+      if (indexRoom === undefined || indexRoom === null) {
+        console.error('Invalid room ID: indexRoom is undefined or null');
+        throw new Error('Room ID is required');
+      }
+      
+      // Convert indexRoom to number if it's a string containing a number
+      if (typeof indexRoom === 'string') {
+        // Try to parse as a number
+        const parsedRoomId = parseInt(indexRoom, 10);
+        if (!isNaN(parsedRoomId)) {
+          indexRoom = parsedRoomId;
+        }
+      }
+      
+      console.log(`Attempting to add player ${playerId} to room ${indexRoom} (type: ${typeof indexRoom})`);
+      
+      // Получаем список всех комнат для отладки
+      const allRooms = gameStore.getAllRooms();
+      console.log(`Available rooms: ${JSON.stringify(allRooms.map(room => room.roomId))}`);
+      
+      // Check if room exists before trying to add player
+      const roomExists = gameStore.getRoom(indexRoom);
+      if (!roomExists) {
+        throw new Error(`Room with ID ${indexRoom} does not exist`);
+      }
+      
       // Add player to room
       const room = gameStore.addUserToRoom(indexRoom, playerId);
+      console.log(`Successfully added player to room. Room now has ${room.roomUsers.length} users`);
       
       // If there are 2 players in the room, create a game
       if (room.roomUsers.length === 2) {
         const game = gameStore.createGame(indexRoom);
+        console.log(`Game created with ID: ${game.gameId}`);
         
         // Send game creation message to both players
         this.sendCreateGameMessage(game.gameId, game.player1Id, game.player2Id);
@@ -198,18 +278,60 @@ export class MessageHandler {
       this.sendRoomsUpdate();
     } catch (error) {
       console.error('Error adding user to room:', error);
+      
+      // Send error message to the client
+      this.wsManager.sendMessage(ws, {
+        type: 'error',
+        data: {
+          message: `Failed to join room: ${error instanceof Error ? error.message : 'Unknown error'}`
+        },
+        id: message.id
+      });
     }
   }
 
   // Ship placement handling
   private handleAddShips(ws: WebSocket, message: AddShipsRequest): void {
-    const { gameId, ships, indexPlayer } = message.data;
+    // Получаем данные из сообщения, поддерживая разные форматы
+    let gameId, ships, indexPlayer;
+    
+    if (typeof message.data === 'object') {
+      // Если data - объект, извлекаем поля напрямую
+      gameId = message.data.gameId || message.data.idGame; // Поддерживаем оба формата
+      ships = message.data.ships;
+      indexPlayer = message.data.indexPlayer;
+    } else if (typeof message.data === 'string') {
+      // Если data - строка, пробуем парсить как JSON
+      try {
+        const parsedData = JSON.parse(message.data);
+        gameId = parsedData.gameId || parsedData.idGame; // Поддерживаем оба формата
+        ships = parsedData.ships;
+        indexPlayer = parsedData.indexPlayer;
+      } catch (e) {
+        console.error('Error parsing add_ships data:', e);
+        return;
+      }
+    }
+    
+    console.log(`Attempting to add ships to game ${gameId} for player ${indexPlayer}`);
     
     try {
-      const game = gameStore.getGame(gameId);
+      // Пробуем найти игру по ID
+      let game = gameStore.getGame(gameId);
+      
+      // Если игра не найдена, пробуем преобразовать ID в число
+      if (!game && typeof gameId === 'string') {
+        const numericId = parseInt(gameId, 10);
+        if (!isNaN(numericId)) {
+          game = gameStore.getGame(numericId);
+          console.log(`Tried numeric ID ${numericId}, game found: ${!!game}`);
+        }
+      }
       
       if (!game) {
-        console.error('Game not found');
+        // Если игра все еще не найдена, выводим все доступные игры для отладки
+        const allGames = gameStore.getAllGames();
+        console.error(`Game not found with ID: ${gameId}. Available games: ${JSON.stringify(allGames.map(g => g.gameId))}`);
         return;
       }
       
@@ -443,9 +565,17 @@ export class MessageHandler {
   private sendRoomsUpdate(): void {
     const rooms = gameStore.getAllRooms();
     
+    // Добавляем дополнительную информацию о комнатах для отладки
+    const roomsWithDetails = rooms.map(room => ({
+      ...room,
+      roomIdType: typeof room.roomId
+    }));
+    
+    console.log(`Sending rooms update: ${JSON.stringify(roomsWithDetails)}`);
+    
     this.wsManager.broadcastMessage({
       type: MessageType.UPDATE_ROOM,
-      data: rooms,
+      data: JSON.stringify(rooms),
       id: 0
     });
   }
@@ -453,10 +583,10 @@ export class MessageHandler {
   // Send updated winners table
   private sendWinnersUpdate(): void {
     const winners = gameStore.getWinners();
-    
+  
     this.wsManager.broadcastMessage({
       type: MessageType.UPDATE_WINNERS,
-      data: winners,
+      data: JSON.stringify(winners),
       id: 0
     });
   }
@@ -479,10 +609,10 @@ export class MessageHandler {
     if (player1Ws) {
       this.wsManager.sendMessage(player1Ws, {
         type: MessageType.CREATE_GAME,
-        data: {
+        data: JSON.stringify({
           idGame: gameId,
           idPlayer: player1Id
-        },
+        }),
         id: 0
       });
     }
@@ -491,10 +621,10 @@ export class MessageHandler {
     if (player2Ws) {
       this.wsManager.sendMessage(player2Ws, {
         type: MessageType.CREATE_GAME,
-        data: {
+        data: JSON.stringify({
           idGame: gameId,
           idPlayer: player2Id
-        },
+        }),
         id: 0
       });
     }
