@@ -14,3 +14,7 @@ Thumbs.db
 
 # Logs
 npm-debug.log
+
+# Nuxt.js build / generate output
+.nuxt
+dist
