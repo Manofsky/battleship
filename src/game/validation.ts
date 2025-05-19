@@ -1,9 +1,10 @@
 import { Ship, Position } from '../models/types.js';
+import { config } from '../config.js';
 
 // Class for validating ship placement and game rules
 export class GameValidation {
-  // Board size
-  private static readonly BOARD_SIZE = 10;
+  // Board size from config
+  private static readonly BOARD_SIZE = config.game.boardSize;
 
   // Validate if a ship is within the board boundaries
   public static isShipWithinBounds(ship: Ship): boolean {
@@ -104,17 +105,17 @@ export class GameValidation {
 
   // Validate the number and types of ships
   public static validateShipConfiguration(ships: Ship[]): boolean {
-    // Count of each ship type
-    const shipCounts: Record<string, number> = {
-      'small': 0,  // 1-cell ships (4)
-      'medium': 0, // 2-cell ships (3)
-      'large': 0,  // 3-cell ships (2)
-      'huge': 0    // 4-cell ships (1)
-    };
+    // Count ships by length
+    const shipCountsByLength: Record<number, number> = {};
     
-    // Count ships by type
+    // Initialize counts
+    for (let length = 1; length <= 4; length++) {
+      shipCountsByLength[length] = 0;
+    }
+    
+    // Count ships by length
     for (const ship of ships) {
-      shipCounts[ship.type]++;
+      shipCountsByLength[ship.length]++;
       
       // Validate ship length matches its type
       if (
@@ -127,13 +128,15 @@ export class GameValidation {
       }
     }
     
-    // Validate ship counts
-    return (
-      shipCounts.small === 4 &&
-      shipCounts.medium === 3 &&
-      shipCounts.large === 2 &&
-      shipCounts.huge === 1
-    );
+    // Validate ship counts against config
+    for (let length = 1; length <= 4; length++) {
+      const expectedCount = config.game.ships[length as keyof typeof config.game.ships] || 0;
+      if (shipCountsByLength[length] !== expectedCount) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 
   // Validate all ship placement rules

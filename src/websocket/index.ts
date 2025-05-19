@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Message } from '../models/types.js';
 import { ExtendedWebSocket } from '../models/websocket.js';
+import { config } from '../config.js';
 
 // WebSocket server management class
 export class WebSocketManager {
@@ -74,7 +75,7 @@ export class WebSocketManager {
         ws.isAlive = false;
         ws.ping();
       });
-    }, 30000);
+    }, config.pingInterval);
 
     // Clear interval when server closes
     this.wss.on('close', () => {

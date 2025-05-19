@@ -1,9 +1,11 @@
 import { httpServer } from './http_server/index.js';
 import { WebSocketManager } from './websocket/index.js';
 import { MessageHandler } from './utils/messageHandler.js';
+import { config } from './config.js';
 
-const HTTP_PORT = 8181;
-const WS_PORT = 8080;
+// Get port from environment variable or use default from config
+const WS_PORT = config.port;
+const HTTP_PORT = WS_PORT + 1; // HTTP server runs on WebSocket port + 1
 
 // Start HTTP server for static files
 console.log(`Starting static HTTP server on port ${HTTP_PORT}`);
