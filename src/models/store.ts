@@ -121,6 +121,10 @@ export class GameStore {
     return this.games.get(gameId);
   }
 
+  public getAllGames(): GameSession[] {
+    return Array.from(this.games.values());
+  }
+
   public removeGame(gameId: string | number): void {
     this.games.delete(gameId);
   }

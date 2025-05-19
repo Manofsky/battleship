@@ -12,18 +12,20 @@ import {
 import { gameStore } from '../models/store.js';
 import { WebSocketManager } from '../websocket/index.js';
 import { GameManager } from '../game/index.js';
+import { GameValidation } from '../game/validation.js';
+import { ExtendedWebSocket } from '../models/websocket.js';
 
 // Class for handling client messages
 export class MessageHandler {
   private wsManager: WebSocketManager;
-  private clientsMap: Map<WebSocket, string | number> = new Map();
+  private clientsMap: Map<ExtendedWebSocket, string | number> = new Map();
 
   constructor(wsManager: WebSocketManager) {
     this.wsManager = wsManager;
   }
 
   // Method for processing messages
-  public handleMessage(ws: WebSocket, message: Message): void {
+  public handleMessage(ws: ExtendedWebSocket, message: Message): void {
     console.log(`Handling message of type: ${message.type}`);
 
     switch (message.type) {
@@ -47,6 +49,56 @@ export class MessageHandler {
         break;
       default:
         console.log(`Unhandled message type: ${message.type}`);
+    }
+  }
+  
+  // Handle player disconnection
+  public handlePlayerDisconnect(playerId: string | number): void {
+    console.log(`Player ${playerId} disconnected`);
+    
+    // Check if player is in a room
+    const rooms = gameStore.getAllRooms();
+    for (const room of rooms) {
+      const playerIndex = room.roomUsers.findIndex(user => user.index === playerId);
+      if (playerIndex !== -1) {
+        // Remove player from room
+        room.roomUsers.splice(playerIndex, 1);
+        
+        // If room is empty, remove it
+        if (room.roomUsers.length === 0) {
+          gameStore.removeRoom(room.roomId);
+        }
+        
+        // Send updated room list to all players
+        this.sendRoomsUpdate();
+        break;
+      }
+    }
+    
+    // Check if player is in a game
+    const games = gameStore.getAllGames();
+    for (const game of games) {
+      if (game.player1Id === playerId || game.player2Id === playerId) {
+        // Determine winner (the player who didn't disconnect)
+        const winnerId = game.player1Id === playerId ? game.player2Id : game.player1Id;
+        
+        // Set game as finished
+        game.gameFinished = true;
+        game.winnerId = winnerId;
+        
+        // Update winner's stats
+        gameStore.updatePlayerWins(winnerId);
+        
+        // Send finish game message
+        this.sendFinishGameMessage(game);
+        
+        // Send updated winners table
+        this.sendWinnersUpdate();
+        
+        // Remove the game
+        gameStore.removeGame(game.gameId);
+        break;
+      }
     }
   }
 
@@ -161,6 +213,24 @@ export class MessageHandler {
         return;
       }
       
+      // Validate ship placement
+      const { valid, error } = GameValidation.validateShipPlacement(ships);
+      
+      if (!valid) {
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG, // Using REG type for error messages
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: `Invalid ship placement: ${error}`
+          },
+          id: 0
+        });
+        return;
+      }
+      
       // Add player's ships
       game.addShips(indexPlayer, ships);
       
@@ -190,12 +260,55 @@ export class MessageHandler {
       
       // Check if it's the player's turn
       if (!game.isPlayerTurn(indexPlayer)) {
-        console.error('Not player\'s turn');
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG,
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: 'Not your turn'
+          },
+          id: 0
+        });
+        return;
+      }
+      
+      // Validate shot coordinates
+      if (!GameValidation.isValidShot(x, y)) {
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG,
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: 'Invalid shot coordinates'
+          },
+          id: 0
+        });
         return;
       }
       
       // Determine the attack target (opponent)
       const targetPlayerId = indexPlayer === game.player1Id ? game.player2Id : game.player1Id;
+      
+      // Check if the cell was already shot
+      const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
+      if (board[y][x] !== null) {
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG,
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: 'This cell was already shot'
+          },
+          id: 0
+        });
+        return;
+      }
       
       // Check the hit
       const status = GameManager.checkHit(targetPlayerId, { x, y }, game);
@@ -248,12 +361,41 @@ export class MessageHandler {
       
       // Check if it's the player's turn
       if (!game.isPlayerTurn(indexPlayer)) {
-        console.error('Not player\'s turn');
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG,
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: 'Not your turn'
+          },
+          id: 0
+        });
         return;
       }
       
       // Determine the attack target (opponent)
       const targetPlayerId = indexPlayer === game.player1Id ? game.player2Id : game.player1Id;
+      
+      // Check if there are any cells left to attack
+      const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
+      const hasAvailableCells = board.some(row => row.some(cell => cell === null));
+      
+      if (!hasAvailableCells) {
+        // Send error message to the player
+        this.wsManager.sendMessage(ws, {
+          type: MessageType.REG,
+          data: {
+            name: '',
+            index: indexPlayer,
+            error: true,
+            errorText: 'No available cells to attack'
+          },
+          id: 0
+        });
+        return;
+      }
       
       // Generate random position for attack
       const position = GameManager.generateRandomAttack(targetPlayerId, game);

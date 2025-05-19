@@ -1,5 +1,6 @@
 import { GameSession, gameStore } from '../models/store.js';
 import { AttackStatus, Position, Ship } from '../models/types.js';
+import { GameValidation } from './validation.js';
 
 // Game logic management class
 export class GameManager {
@@ -48,18 +49,7 @@ export class GameManager {
   
   // Get all cells occupied by the ship
   private static getShipCells(ship: Ship): Position[] {
-    const cells: Position[] = [];
-    const { x, y } = ship.position;
-    
-    for (let i = 0; i < ship.length; i++) {
-      if (ship.direction) { // horizontally
-        cells.push({ x: x + i, y });
-      } else { // vertically
-        cells.push({ x, y: y + i });
-      }
-    }
-    
-    return cells;
+    return GameValidation.getShipCells(ship);
   }
   
   // Check if the ship is sunk
