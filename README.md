@@ -22,6 +22,10 @@ npm run build
 
 ## Running the app
 
+The application starts two servers:
+- HTTP server on port 8181 (for static files)
+- WebSocket server on port 3000 (for game interaction)
+
 ```bash
 npm run start
 ```
@@ -50,6 +54,7 @@ npm run dev
 - Ship placement on the game board
 - Attack and random attack
 - Tracking win statistics
+- Real-time communication via WebSocket (port 3000)
 
 **Development**
 

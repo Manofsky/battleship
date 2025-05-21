@@ -163,7 +163,6 @@ export class MessageHandler {
     try {
       console.log('Trying to add user to room. Room ID:', indexRoom, 'Player ID:', playerId);
       
-      // Используем публичные методы для получения данных
       try {
         const rooms = gameStore.getAllRooms();
         console.log('Available rooms:', rooms.map(room => room.roomId));
@@ -178,7 +177,6 @@ export class MessageHandler {
         console.log('Error getting players:', e);
       }
       
-      // Преобразуем indexRoom и playerId в числа
       const numericRoomId = Number(indexRoom);
       const numericPlayerId = Number(playerId);
       console.log('Converted to numbers - Room ID:', numericRoomId, 'Player ID:', numericPlayerId);
@@ -222,7 +220,6 @@ export class MessageHandler {
     }
     
     try {
-      // Преобразуем gameId и indexPlayer в числа
       const numericGameId = Number(gameId);
       const numericIndexPlayer = Number(indexPlayer);
       
@@ -271,7 +268,6 @@ export class MessageHandler {
     }
     
     try {
-      // Преобразуем gameId и indexPlayer в числа
       const numericGameId = Number(gameId);
       const numericIndexPlayer = Number(indexPlayer);
       
@@ -349,7 +345,6 @@ export class MessageHandler {
     }
     
     try {
-      // Преобразуем gameId и indexPlayer в числа
       const numericGameId = Number(gameId);
       const numericIndexPlayer = Number(indexPlayer);
       

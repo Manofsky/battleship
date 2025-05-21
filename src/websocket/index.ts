@@ -55,7 +55,6 @@ export class WebSocketManager {
     }
   }
 
-  // Метод для отправки сообщения всем клиентам
   public broadcastMessage(message: Message): void {
     this.wss.clients.forEach((client: WebSocket) => {
       if (client.readyState === WebSocket.OPEN) {
