@@ -1,6 +1,5 @@
 import { GameSession, gameStore } from '../models/store.js';
 import { AttackStatus, Position, Ship } from '../models/types.js';
-import { GameValidation } from './validation.js';
 
 // Game logic management class
 export class GameManager {
@@ -9,86 +8,109 @@ export class GameManager {
     targetPlayerId: string | number,
     position: Position,
     game: GameSession
-  ): AttackStatus {
+  ): { status: AttackStatus, gameOver: boolean } {
     const ships = targetPlayerId === game.player1Id ? game.player1Ships : game.player2Ships;
+    const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
     
-    // Check for a hit on a ship
-    for (let i = 0; i < ships.length; i++) {
-      const ship = ships[i];
-      const shipCells = this.getShipCells(ship);
-      
-      // Check if the attack hit one of the ship's cells
-      const hitCellIndex = shipCells.findIndex(
-        cell => cell.x === position.x && cell.y === position.y
-      );
-      
-      if (hitCellIndex !== -1) {
-        // Mark hit on the ship
-        const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
-        board[position.y][position.x] = 1; // 1 - hit
-        
-        // Check if the ship is sunk
-        const isShipSunk = this.isShipSunk(ship, board);
-        
-        if (isShipSunk) {
-          // If the ship is sunk, mark all cells around the ship as misses
-          this.markAroundSunkShip(ship, board);
-          return 'killed';
-        }
-        
-        return 'shot';
-      }
+    if (position.x < 0 || position.x >= 10 || position.y < 0 || position.y >= 10) {
+      console.error(`Invalid attack coordinates: x=${position.x}, y=${position.y}`);
+      return { status: 'miss', gameOver: false };
     }
     
-    // If no hit, mark as miss
-    const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
-    board[position.y][position.x] = 0; // 0 - miss
+    if (board[position.y][position.x] !== null) {
+      console.log(`Cell already attacked: x=${position.x}, y=${position.y}, value=${board[position.y][position.x]}`);
+      return { status: board[position.y][position.x] === 1 ? 'shot' : 'miss', gameOver: false };
+    }
+
+    for (const ship of ships) {
+      try {
+        console.log(`Checking ship: position=${JSON.stringify(ship.position)}, direction=${ship.direction}, length=${ship.length}`);
+        
+        for (let i = 0; i < ship.length; i++) {
+          let shipX, shipY;
+          if (ship.direction === false) { 
+            shipX = ship.position.x + i;
+            shipY = ship.position.y;
+          } else {
+            shipX = ship.position.x;
+            shipY = ship.position.y + i;
+          }
+          
+          console.log(`Ship cell: x=${shipX}, y=${shipY}, attack position: x=${position.x}, y=${position.y}`);
+          
+          if (shipX === position.x && shipY === position.y) {
+            board[position.y][position.x] = 1; // 1 - попадание
+            
+            let sunk = true;
+            
+            for (let j = 0; j < ship.length; j++) {
+              let checkX, checkY;
+              if (ship.direction === false) { 
+                checkX = ship.position.x + j;
+                checkY = ship.position.y;
+              } else {
+                checkX = ship.position.x;
+                checkY = ship.position.y + j;
+              }
+              
+              console.log(`Checking if sunk - Ship cell: x=${checkX}, y=${checkY}, board value: ${checkX >= 0 && checkX < 10 && checkY >= 0 && checkY < 10 ? board[checkY][checkX] : 'out of bounds'}`);
+              
+              if (checkX >= 0 && checkX < 10 && checkY >= 0 && checkY < 10) {
+                if (board[checkY][checkX] !== 1) {
+                  sunk = false;
+                  console.log(`Ship not sunk - unharmed cell at x=${checkX}, y=${checkY}`);
+                  break;
+                }
+              }
+            }
+            
+            if (sunk) {
+              const allShipsSunk = this.areAllShipsSunk(targetPlayerId, game);
+              console.log(`Ship sunk! All ships sunk: ${allShipsSunk}`);
+              
+              return { status: 'killed', gameOver: allShipsSunk };
+            }
+            
+            return { status: 'shot', gameOver: false };
+          }
+        }
+      } catch (error) {
+        console.error(`Error checking hit:`, error);
+      }
+    }
+
+    board[position.y][position.x] = 0; // 0 - промах
     
-    return 'miss';
+    return { status: 'miss', gameOver: false };
   }
   
   // Get all cells occupied by the ship
   private static getShipCells(ship: Ship): Position[] {
-    return GameValidation.getShipCells(ship);
+    const cells: Position[] = [];
+    const { x, y } = ship.position;
+    
+    for (let i = 0; i < ship.length; i++) {
+      if (ship.direction === false) {
+        cells.push({ x: x + i, y });
+      } else {
+        cells.push({ x, y: y + i });
+      }
+    }
+    
+    return cells;
   }
   
   // Check if the ship is sunk
   private static isShipSunk(ship: Ship, board: (number | null)[][]): boolean {
     const shipCells = this.getShipCells(ship);
     
-    // Check if all ship cells are hit
-    return shipCells.every(cell => board[cell.y][cell.x] === 1);
-  }
-  
-  // Mark cells around a sunk ship as misses
-  private static markAroundSunkShip(ship: Ship, board: (number | null)[][]): void {
-    const shipCells = this.getShipCells(ship);
-    
-    // Get all cells around the ship
-    const surroundingCells: Position[] = [];
-    
-    shipCells.forEach(cell => {
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const nx = cell.x + dx;
-          const ny = cell.y + dy;
-          
-          // Check that the cell is within the board boundaries
-          if (nx >= 0 && nx < 10 && ny >= 0 && ny < 10) {
-            // Check that the cell is not part of the ship
-            const isShipCell = shipCells.some(sc => sc.x === nx && sc.y === ny);
-            
-            if (!isShipCell) {
-              surroundingCells.push({ x: nx, y: ny });
-            }
-          }
-        }
+    // Check if all ship cells are valid and hit
+    return shipCells.every(cell => {
+      if (cell.y < 0 || cell.y >= board.length || cell.x < 0 || cell.x >= board[0].length) {
+        console.error(`Invalid ship cell coordinates: x=${cell.x}, y=${cell.y}`);
+        return false;
       }
-    });
-    
-    // Mark all surrounding cells as misses
-    surroundingCells.forEach(cell => {
-      board[cell.y][cell.x] = 0; // 0 - miss
+      return board[cell.y][cell.x] === 1; // 1 - hit
     });
   }
   

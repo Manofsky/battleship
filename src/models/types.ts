@@ -44,15 +44,14 @@ export interface CreateRoomRequest extends Message {
 export interface AddUserToRoomRequest extends Message {
   type: MessageType.ADD_USER_TO_ROOM;
   data: {
-    indexRoom?: string | number;
-  } | string | number;
+    indexRoom: string | number;
+  };
 }
 
 export interface AddShipsRequest extends Message {
   type: MessageType.ADD_SHIPS;
   data: {
-    gameId?: string | number;
-    idGame?: string | number; // Добавляем поддержку альтернативного формата
+    gameId: string | number;
     ships: Ship[];
     indexPlayer: string | number;
   };
@@ -147,7 +146,7 @@ export interface Position {
 
 export interface Ship {
   position: Position;
-  direction: boolean; // true - горизонтально, false - вертикально
+  direction: boolean; // true - vertical, false - horizontal
   length: number;
   type: ShipType;
 }

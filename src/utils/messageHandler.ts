@@ -12,20 +12,18 @@ import {
 import { gameStore } from '../models/store.js';
 import { WebSocketManager } from '../websocket/index.js';
 import { GameManager } from '../game/index.js';
-import { GameValidation } from '../game/validation.js';
-import { ExtendedWebSocket } from '../models/websocket.js';
 
 // Class for handling client messages
 export class MessageHandler {
   private wsManager: WebSocketManager;
-  private clientsMap: Map<ExtendedWebSocket, string | number> = new Map();
+  private clientsMap: Map<WebSocket, string | number> = new Map();
 
   constructor(wsManager: WebSocketManager) {
     this.wsManager = wsManager;
   }
 
   // Method for processing messages
-  public handleMessage(ws: ExtendedWebSocket, message: Message): void {
+  public handleMessage(ws: WebSocket, message: Message): void {
     console.log(`Handling message of type: ${message.type}`);
 
     switch (message.type) {
@@ -51,60 +49,26 @@ export class MessageHandler {
         console.log(`Unhandled message type: ${message.type}`);
     }
   }
-  
-  // Handle player disconnection
-  public handlePlayerDisconnect(playerId: string | number): void {
-    console.log(`Player ${playerId} disconnected`);
-    
-    // Check if player is in a room
-    const rooms = gameStore.getAllRooms();
-    for (const room of rooms) {
-      const playerIndex = room.roomUsers.findIndex(user => user.index === playerId);
-      if (playerIndex !== -1) {
-        // Remove player from room
-        room.roomUsers.splice(playerIndex, 1);
-        
-        // If room is empty, remove it
-        if (room.roomUsers.length === 0) {
-          gameStore.removeRoom(room.roomId);
-        }
-        
-        // Send updated room list to all players
-        this.sendRoomsUpdate();
-        break;
-      }
-    }
-    
-    // Check if player is in a game
-    const games = gameStore.getAllGames();
-    for (const game of games) {
-      if (game.player1Id === playerId || game.player2Id === playerId) {
-        // Determine winner (the player who didn't disconnect)
-        const winnerId = game.player1Id === playerId ? game.player2Id : game.player1Id;
-        
-        // Set game as finished
-        game.gameFinished = true;
-        game.winnerId = winnerId;
-        
-        // Update winner's stats
-        gameStore.updatePlayerWins(winnerId);
-        
-        // Send finish game message
-        this.sendFinishGameMessage(game);
-        
-        // Send updated winners table
-        this.sendWinnersUpdate();
-        
-        // Remove the game
-        gameStore.removeGame(game.gameId);
-        break;
-      }
-    }
-  }
 
   // Player registration handling
   private handleRegistration(ws: WebSocket, message: RegRequest): void {
-    const { name, password } = message.data;
+    let name, password;
+    
+    try {
+      if (typeof message.data === 'string') {
+        const parsedData = JSON.parse(message.data);
+        name = parsedData.name;
+        password = parsedData.password;
+      } else {
+        name = message.data.name;
+        password = message.data.password;
+      }
+    } catch (error) {
+      console.error('Error parsing message data:', error);
+      return;
+    }
+    
+    console.log('Trying to register user. Name:', name);
     
     // Check if player with this name already exists
     let player = gameStore.getPlayerByName(name);
@@ -129,6 +93,8 @@ export class MessageHandler {
       // Create new player
       player = gameStore.addPlayer(name, password);
     }
+    
+    console.log('Player registered/logged in. Name:', name, 'ID:', player.index);
     
     // Associate WebSocket with player ID
     this.clientsMap.set(ws, player.index);
@@ -163,32 +129,12 @@ export class MessageHandler {
     
     try {
       // Create new room
-      const room = gameStore.createRoom(playerId);
-      console.log(`Room created with ID: ${room.roomId}`);
-      
-      // Send confirmation to the client who created the room
-      this.wsManager.sendMessage(ws, {
-        type: 'room_created',
-        data: {
-          roomId: room.roomId,
-          message: `Room created successfully with ID: ${room.roomId}`
-        },
-        id: message.id
-      });
+      gameStore.createRoom(playerId);
       
       // Send updated room list to all players
       this.sendRoomsUpdate();
     } catch (error) {
       console.error('Error creating room:', error);
-      
-      // Send error message to the client
-      this.wsManager.sendMessage(ws, {
-        type: 'error',
-        data: {
-          message: `Failed to create room: ${error instanceof Error ? error.message : 'Unknown error'}`
-        },
-        id: message.id
-      });
     }
   }
 
@@ -196,79 +142,51 @@ export class MessageHandler {
   private handleAddUserToRoom(ws: WebSocket, message: AddUserToRoomRequest): void {
     const playerId = this.clientsMap.get(ws);
     
+    let indexRoom;
+    try {
+      if (typeof message.data === 'string') {
+        const parsedData = JSON.parse(message.data);
+        indexRoom = parsedData.indexRoom;
+      } else {
+        indexRoom = message.data.indexRoom;
+      }
+    } catch (error) {
+      console.error('Error parsing message data:', error);
+      return;
+    }
+
     if (!playerId) {
       console.error('Player not registered');
       return;
     }
     
     try {
-      // Получаем ID комнаты из разных возможных форматов данных
-      let indexRoom: string | number | undefined;
+      console.log('Trying to add user to room. Room ID:', indexRoom, 'Player ID:', playerId);
       
-      // Проверяем формат данных
-      console.log(`Message data type: ${typeof message.data}`);
-      console.log(`Message data: ${JSON.stringify(message.data)}`);
-      
-      if (typeof message.data === 'number') {
-        // Если data - это число, используем его напрямую как ID комнаты
-        indexRoom = message.data;
-      } else if (typeof message.data === 'string') {
-        // Если data - это строка, пробуем парсить её как JSON
-        try {
-          const parsedData = JSON.parse(message.data);
-          console.log(`Parsed data: ${JSON.stringify(parsedData)}`);
-          
-          if (parsedData && typeof parsedData === 'object' && 'indexRoom' in parsedData) {
-            indexRoom = parsedData.indexRoom;
-          } else {
-            // Если не удалось найти indexRoom в объекте, пробуем использовать строку напрямую
-            indexRoom = message.data;
-          }
-        } catch (e) {
-          // Если не удалось парсить JSON, используем строку как есть
-          console.log(`Failed to parse data as JSON: ${e instanceof Error ? e.message : 'Unknown error'}`);
-          indexRoom = message.data;
-        }
-      } else if (message.data && typeof message.data === 'object') {
-        // Если data - это объект, пытаемся получить indexRoom из него
-        indexRoom = message.data.indexRoom;
+      try {
+        const rooms = gameStore.getAllRooms();
+        console.log('Available rooms:', rooms.map(room => room.roomId));
+      } catch (e) {
+        console.log('Error getting rooms:', e);
       }
       
-      // Проверяем, что indexRoom определен
-      if (indexRoom === undefined || indexRoom === null) {
-        console.error('Invalid room ID: indexRoom is undefined or null');
-        throw new Error('Room ID is required');
+      try {
+        const players = gameStore.getAllPlayers();
+        console.log('Available players:', players.map(player => player.index));
+      } catch (e) {
+        console.log('Error getting players:', e);
       }
       
-      // Convert indexRoom to number if it's a string containing a number
-      if (typeof indexRoom === 'string') {
-        // Try to parse as a number
-        const parsedRoomId = parseInt(indexRoom, 10);
-        if (!isNaN(parsedRoomId)) {
-          indexRoom = parsedRoomId;
-        }
-      }
-      
-      console.log(`Attempting to add player ${playerId} to room ${indexRoom} (type: ${typeof indexRoom})`);
-      
-      // Получаем список всех комнат для отладки
-      const allRooms = gameStore.getAllRooms();
-      console.log(`Available rooms: ${JSON.stringify(allRooms.map(room => room.roomId))}`);
-      
-      // Check if room exists before trying to add player
-      const roomExists = gameStore.getRoom(indexRoom);
-      if (!roomExists) {
-        throw new Error(`Room with ID ${indexRoom} does not exist`);
-      }
+      const numericRoomId = Number(indexRoom);
+      const numericPlayerId = Number(playerId);
+      console.log('Converted to numbers - Room ID:', numericRoomId, 'Player ID:', numericPlayerId);
       
       // Add player to room
-      const room = gameStore.addUserToRoom(indexRoom, playerId);
-      console.log(`Successfully added player to room. Room now has ${room.roomUsers.length} users`);
+      const room = gameStore.addUserToRoom(numericRoomId, numericPlayerId);
       
       // If there are 2 players in the room, create a game
       if (room.roomUsers.length === 2) {
-        const game = gameStore.createGame(indexRoom);
-        console.log(`Game created with ID: ${game.gameId}`);
+        const game = gameStore.createGame(numericRoomId);
         
         // Send game creation message to both players
         this.sendCreateGameMessage(game.gameId, game.player1Id, game.player2Id);
@@ -278,83 +196,42 @@ export class MessageHandler {
       this.sendRoomsUpdate();
     } catch (error) {
       console.error('Error adding user to room:', error);
-      
-      // Send error message to the client
-      this.wsManager.sendMessage(ws, {
-        type: 'error',
-        data: {
-          message: `Failed to join room: ${error instanceof Error ? error.message : 'Unknown error'}`
-        },
-        id: message.id
-      });
     }
   }
 
   // Ship placement handling
   private handleAddShips(ws: WebSocket, message: AddShipsRequest): void {
-    // Получаем данные из сообщения, поддерживая разные форматы
     let gameId, ships, indexPlayer;
     
-    if (typeof message.data === 'object') {
-      // Если data - объект, извлекаем поля напрямую
-      gameId = message.data.gameId || message.data.idGame; // Поддерживаем оба формата
-      ships = message.data.ships;
-      indexPlayer = message.data.indexPlayer;
-    } else if (typeof message.data === 'string') {
-      // Если data - строка, пробуем парсить как JSON
-      try {
+    try {
+      if (typeof message.data === 'string') {
         const parsedData = JSON.parse(message.data);
-        gameId = parsedData.gameId || parsedData.idGame; // Поддерживаем оба формата
+        gameId = parsedData.gameId;
         ships = parsedData.ships;
         indexPlayer = parsedData.indexPlayer;
-      } catch (e) {
-        console.error('Error parsing add_ships data:', e);
-        return;
+      } else {
+        gameId = message.data.gameId;
+        ships = message.data.ships;
+        indexPlayer = message.data.indexPlayer;
       }
+    } catch (error) {
+      console.error('Error parsing message data:', error);
+      return;
     }
     
-    console.log(`Attempting to add ships to game ${gameId} for player ${indexPlayer}`);
-    
     try {
-      // Пробуем найти игру по ID
-      let game = gameStore.getGame(gameId);
+      const numericGameId = Number(gameId);
+      const numericIndexPlayer = Number(indexPlayer);
       
-      // Если игра не найдена, пробуем преобразовать ID в число
-      if (!game && typeof gameId === 'string') {
-        const numericId = parseInt(gameId, 10);
-        if (!isNaN(numericId)) {
-          game = gameStore.getGame(numericId);
-          console.log(`Tried numeric ID ${numericId}, game found: ${!!game}`);
-        }
-      }
+      const game = gameStore.getGame(numericGameId);
       
       if (!game) {
-        // Если игра все еще не найдена, выводим все доступные игры для отладки
-        const allGames = gameStore.getAllGames();
-        console.error(`Game not found with ID: ${gameId}. Available games: ${JSON.stringify(allGames.map(g => g.gameId))}`);
-        return;
-      }
-      
-      // Validate ship placement
-      const { valid, error } = GameValidation.validateShipPlacement(ships);
-      
-      if (!valid) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG, // Using REG type for error messages
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: `Invalid ship placement: ${error}`
-          },
-          id: 0
-        });
+        console.error('Game not found');
         return;
       }
       
       // Add player's ships
-      game.addShips(indexPlayer, ships);
+      game.addShips(numericIndexPlayer, ships);
       
       // Send game start message if both players have placed their ships
       if (game.gameStarted) {
@@ -370,10 +247,33 @@ export class MessageHandler {
 
   // Attack handling
   private handleAttack(ws: WebSocket, message: AttackRequest): void {
-    const { gameId, x, y, indexPlayer } = message.data;
+    let gameId, x, y, indexPlayer;
     
     try {
-      const game = gameStore.getGame(gameId);
+      if (typeof message.data === 'string') {
+        const parsedData = JSON.parse(message.data);
+        gameId = parsedData.gameId;
+        x = parsedData.x;
+        y = parsedData.y;
+        indexPlayer = parsedData.indexPlayer;
+      } else {
+        gameId = message.data.gameId;
+        x = message.data.x;
+        y = message.data.y;
+        indexPlayer = message.data.indexPlayer;
+      }
+    } catch (error) {
+      console.error('Error parsing message data:', error);
+      return;
+    }
+    
+    try {
+      const numericGameId = Number(gameId);
+      const numericIndexPlayer = Number(indexPlayer);
+      
+      console.log('Trying to attack. Game ID:', numericGameId, 'Player ID:', numericIndexPlayer, 'Position:', x, y);
+      
+      const game = gameStore.getGame(numericGameId);
       
       if (!game || !game.gameStarted || game.gameFinished) {
         console.error('Game not found or not started or already finished');
@@ -381,71 +281,28 @@ export class MessageHandler {
       }
       
       // Check if it's the player's turn
-      if (!game.isPlayerTurn(indexPlayer)) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG,
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: 'Not your turn'
-          },
-          id: 0
-        });
-        return;
-      }
-      
-      // Validate shot coordinates
-      if (!GameValidation.isValidShot(x, y)) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG,
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: 'Invalid shot coordinates'
-          },
-          id: 0
-        });
+      if (!game.isPlayerTurn(numericIndexPlayer)) {
+        console.error('Not player\'s turn');
         return;
       }
       
       // Determine the attack target (opponent)
-      const targetPlayerId = indexPlayer === game.player1Id ? game.player2Id : game.player1Id;
-      
-      // Check if the cell was already shot
-      const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
-      if (board[y][x] !== null) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG,
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: 'This cell was already shot'
-          },
-          id: 0
-        });
-        return;
-      }
+      const targetPlayerId = numericIndexPlayer === game.player1Id ? game.player2Id : game.player1Id;
       
       // Check the hit
-      const status = GameManager.checkHit(targetPlayerId, { x, y }, game);
+      const result = GameManager.checkHit(targetPlayerId, { x: Number(x), y: Number(y) }, game);
       
       // Send attack result to both players
-      this.sendAttackResultMessage(game, { x, y }, status);
+      this.sendAttackResultMessage(game, { x: Number(x), y: Number(y) }, result.status);
       
-      // Check if all opponent's ships are sunk
-      if (status === 'killed' && GameManager.areAllShipsSunk(targetPlayerId, game)) {
+      // Check if the game is over (all opponent's ships are sunk)
+      if (result.gameOver) {
         // Game is over, current player won
         game.gameFinished = true;
-        game.winnerId = indexPlayer;
+        game.winnerId = numericIndexPlayer;
         
         // Update player's wins
-        gameStore.updatePlayerWins(indexPlayer);
+        gameStore.updatePlayerWins(numericIndexPlayer);
         
         // Send game finish message
         this.sendFinishGameMessage(game);
@@ -454,10 +311,10 @@ export class MessageHandler {
         this.sendWinnersUpdate();
         
         // Remove game
-        gameStore.removeGame(gameId);
+        gameStore.removeGame(numericGameId);
       } else {
         // If miss, switch turn
-        if (status === 'miss') {
+        if (result.status === 'miss') {
           game.switchTurn();
         }
         
@@ -471,10 +328,29 @@ export class MessageHandler {
 
   // Random attack handling
   private handleRandomAttack(ws: WebSocket, message: RandomAttackRequest): void {
-    const { gameId, indexPlayer } = message.data;
+    let gameId, indexPlayer;
     
     try {
-      const game = gameStore.getGame(gameId);
+      if (typeof message.data === 'string') {
+        const parsedData = JSON.parse(message.data);
+        gameId = parsedData.gameId;
+        indexPlayer = parsedData.indexPlayer;
+      } else {
+        gameId = message.data.gameId;
+        indexPlayer = message.data.indexPlayer;
+      }
+    } catch (error) {
+      console.error('Error parsing message data:', error);
+      return;
+    }
+    
+    try {
+      const numericGameId = Number(gameId);
+      const numericIndexPlayer = Number(indexPlayer);
+      
+      console.log('Trying to make random attack. Game ID:', numericGameId, 'Player ID:', numericIndexPlayer);
+      
+      const game = gameStore.getGame(numericGameId);
       
       if (!game || !game.gameStarted || game.gameFinished) {
         console.error('Game not found or not started or already finished');
@@ -482,60 +358,31 @@ export class MessageHandler {
       }
       
       // Check if it's the player's turn
-      if (!game.isPlayerTurn(indexPlayer)) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG,
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: 'Not your turn'
-          },
-          id: 0
-        });
+      if (!game.isPlayerTurn(numericIndexPlayer)) {
+        console.error('Not player\'s turn');
         return;
       }
       
       // Determine the attack target (opponent)
-      const targetPlayerId = indexPlayer === game.player1Id ? game.player2Id : game.player1Id;
-      
-      // Check if there are any cells left to attack
-      const board = targetPlayerId === game.player1Id ? game.player1Board : game.player2Board;
-      const hasAvailableCells = board.some(row => row.some(cell => cell === null));
-      
-      if (!hasAvailableCells) {
-        // Send error message to the player
-        this.wsManager.sendMessage(ws, {
-          type: MessageType.REG,
-          data: {
-            name: '',
-            index: indexPlayer,
-            error: true,
-            errorText: 'No available cells to attack'
-          },
-          id: 0
-        });
-        return;
-      }
+      const targetPlayerId = numericIndexPlayer === game.player1Id ? game.player2Id : game.player1Id;
       
       // Generate random position for attack
       const position = GameManager.generateRandomAttack(targetPlayerId, game);
       
       // Check the hit
-      const status = GameManager.checkHit(targetPlayerId, position, game);
+      const result = GameManager.checkHit(targetPlayerId, position, game);
       
       // Send attack result to both players
-      this.sendAttackResultMessage(game, position, status);
+      this.sendAttackResultMessage(game, position, result.status);
       
-      // Check if all opponent's ships are sunk
-      if (status === 'killed' && GameManager.areAllShipsSunk(targetPlayerId, game)) {
+      // Check if the game is over (all opponent's ships are sunk)
+      if (result.gameOver) {
         // Game is over, current player won
         game.gameFinished = true;
-        game.winnerId = indexPlayer;
+        game.winnerId = numericIndexPlayer;
         
         // Update player's wins
-        gameStore.updatePlayerWins(indexPlayer);
+        gameStore.updatePlayerWins(numericIndexPlayer);
         
         // Send game finish message
         this.sendFinishGameMessage(game);
@@ -544,10 +391,10 @@ export class MessageHandler {
         this.sendWinnersUpdate();
         
         // Remove game
-        gameStore.removeGame(gameId);
+        gameStore.removeGame(numericGameId);
       } else {
         // If miss, switch turn
-        if (status === 'miss') {
+        if (result.status === 'miss') {
           game.switchTurn();
         }
         
@@ -565,14 +412,6 @@ export class MessageHandler {
   private sendRoomsUpdate(): void {
     const rooms = gameStore.getAllRooms();
     
-    // Добавляем дополнительную информацию о комнатах для отладки
-    const roomsWithDetails = rooms.map(room => ({
-      ...room,
-      roomIdType: typeof room.roomId
-    }));
-    
-    console.log(`Sending rooms update: ${JSON.stringify(roomsWithDetails)}`);
-    
     this.wsManager.broadcastMessage({
       type: MessageType.UPDATE_ROOM,
       data: JSON.stringify(rooms),
@@ -583,7 +422,7 @@ export class MessageHandler {
   // Send updated winners table
   private sendWinnersUpdate(): void {
     const winners = gameStore.getWinners();
-  
+    
     this.wsManager.broadcastMessage({
       type: MessageType.UPDATE_WINNERS,
       data: JSON.stringify(winners),
@@ -648,10 +487,10 @@ export class MessageHandler {
     if (player1Ws) {
       this.wsManager.sendMessage(player1Ws, {
         type: MessageType.START_GAME,
-        data: {
+        data: JSON.stringify({
           ships: game.player1Ships,
           currentPlayerIndex: game.player1Id
-        },
+        }),
         id: 0
       });
     }
@@ -660,10 +499,10 @@ export class MessageHandler {
     if (player2Ws) {
       this.wsManager.sendMessage(player2Ws, {
         type: MessageType.START_GAME,
-        data: {
+        data: JSON.stringify({
           ships: game.player2Ships,
           currentPlayerIndex: game.player2Id
-        },
+        }),
         id: 0
       });
     }
@@ -673,9 +512,9 @@ export class MessageHandler {
   private sendTurnMessage(game: any): void {
     this.wsManager.broadcastMessage({
       type: MessageType.TURN,
-      data: {
+      data: JSON.stringify({
         currentPlayer: game.currentPlayerId
-      },
+      }),
       id: 0
     });
   }
@@ -684,11 +523,11 @@ export class MessageHandler {
   private sendAttackResultMessage(game: any, position: { x: number; y: number }, status: string): void {
     this.wsManager.broadcastMessage({
       type: MessageType.ATTACK,
-      data: {
+      data: JSON.stringify({
         position,
         currentPlayer: game.currentPlayerId,
         status
-      },
+      }),
       id: 0
     });
   }
@@ -697,9 +536,9 @@ export class MessageHandler {
   private sendFinishGameMessage(game: any): void {
     this.wsManager.broadcastMessage({
       type: MessageType.FINISH,
-      data: {
+      data: JSON.stringify({
         winPlayer: game.winnerId
-      },
+      }),
       id: 0
     });
   }
