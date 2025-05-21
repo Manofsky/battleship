@@ -3,7 +3,7 @@ import { WebSocketManager } from './websocket/index.js';
 import { MessageHandler } from './utils/messageHandler.js';
 
 const HTTP_PORT = 8181;
-const WS_PORT = 8080;
+const WS_PORT = 3000;
 
 // Start HTTP server for static files
 console.log(`Starting static HTTP server on port ${HTTP_PORT}`);

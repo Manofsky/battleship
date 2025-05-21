@@ -146,7 +146,7 @@ export interface Position {
 
 export interface Ship {
   position: Position;
-  direction: boolean; // true - горизонтально, false - вертикально
+  direction: boolean; // true - вертикально, false - горизонтально
   length: number;
   type: ShipType;
 }
